@@ -171,8 +171,9 @@ request using the token provided above
 @app.route('/download/<string:id>', methods=['GET'])
 def download(id):
   try:
-    return send_from_directory(directory=files_dir, filename=id)
-  except:
+    return send_from_directory(directory='files', filename=id)
+  except FileNotFoundError as e:
+    print(e)
     return abort(404)
 
 if __name__ == '__main__':

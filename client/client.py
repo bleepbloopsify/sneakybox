@@ -1,4 +1,5 @@
 from json import load, dump
+import os
 
 import requests
 
@@ -108,4 +109,14 @@ class Client(object):
     }
 
     res = requests.get(SERVER_URI + '/download/' + fileid, allow_redirects=True)
-    print(res.content)
+
+    if res.status_code != 200:
+      print('[download] Failed to retrive file.')
+      exit(1)
+
+    fpath = os.path.join('downloads', fileid)
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+
+    with open('downloads/' + fileid, 'wb') as file:
+      file.write(bytes(res.content))
+      print('[download] File downloaded! Check your downloads folder for the file.')
