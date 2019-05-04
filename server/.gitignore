@@ -2,3 +2,4 @@ env/
 .vscode/
 keys/
 target.txt
+__pycache__/

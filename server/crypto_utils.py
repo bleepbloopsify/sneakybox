@@ -21,7 +21,6 @@ PRIV_KEY_FNAME = 'id_rsa'
 
 class ServerKey(object):
 
-
   def __init__(self, keydir=None):
     if keydir is None:
       self.__storage_key = get_random_bytes(AES_KEY_BITLEN // 8)
@@ -61,8 +60,6 @@ class ServerKey(object):
         f.write(self.__priv_key.exportKey())
 
     print("Keys setup")
-
-
   
   def encrypt_file(self, file):
     iv = get_random_bytes(AES_IVLEN)

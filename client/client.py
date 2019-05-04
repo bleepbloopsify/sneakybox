@@ -1,85 +1,102 @@
-import os
-from base64 import b64encode
+from json import load, dump
 
-from Crypto.PublicKey import RSA
 import requests
 
-RSA_KEYLENGTH = 2048
-KEYDIR = 'keys/'
+from crypto_utils import ClientKey
 
 SERVER_URI = 'http://0.0.0.0:9000'
 
-try:
-  with open(KEYDIR + 'privkey.pem', 'rb') as f:
-    print("Reading private key from file: " + KEYDIR + 'privkey.pem')
-    privkey = RSA.importKey(f.read())
-except FileNotFoundError:
-  print("Could not find private key. Generating one now")
-  privkey = RSA.generate(RSA_KEYLENGTH)
-  filename = KEYDIR + 'privkey.pem'
-  os.makedirs(os.path.dirname(filename), exist_ok=True)
-  with open(filename, 'wb') as f:
-    f.write(privkey.exportKey('PEM'))
+class Client(object):
 
-pubkey = b64encode(privkey.publickey().exportKey('DER')).decode('ascii')
+  def __init__(self):
 
-print("Hello from client")
+    self.__key = ClientKey()
+  
+    try:
+      with open('state.json', 'r') as f:
+        self.__state = load(f)
+    except FileNotFoundError:
+      self.__state = {
+        'uuid': None,
+        'files': [],
+      }
+    
+    if 'uuid' not in self.__state or 'files' not in self.__state:
+      self.__state = {
+        'uuid': None,
+        'files': [],
+      }
+    
+  
+  def get_uuid(self):
+    key = self.__key
+    state = self.__state
 
-def register():
-  data = {
-    'pubkey': pubkey,
-  }
+    data = {
+      'pubkey': key.publicKey(),
+    }
 
-  res = requests.post(SERVER_URI + '/register', json=data)
-  if res.status_code == 400:
-    return (None, None)
-  res = res.json()
-  if res['success']:
-    return res['token'], res['uid']
-  else:
-    return (None, None)
+    res = requests.post(SERVER_URI + '/register', json=data)
 
-def get_token(uid):
-  data = {
-    'pubkey': pubkey,
-    'uid': uid,
-  }
+    if res.status_code != 200:
+      print('[upload] Failed to retrive nonce and token from server? Is the server running?')
+      exit(1)
+    
+    body = res.json()
+    if not body['success']:
+      print('[upload] Server side error')
+      print(body)
+      exit(1)
 
-  res = requests.post(SERVER_URI + '/token', json=data)
-  if res.status_code == 403:
-    return register()
+    state['uuid'] = body['uuid']
 
-  res = res.json()
-  if res['success']:
-    return res['token'], uid
-  else:
-    return False, False
+    self.__nonce = body['nonce']
+    self.__state = state
+  
+  def save(self):
+    with open('state.json', 'w+') as f:
+      dump(self.__state, f)
 
+    
+  def get_nonce(self):
+    key = self.__key
+    state = self.__state
 
-try:
-  with open(KEYDIR + 'uid', 'r') as f:
-    uid = f.read()
-  token, uid = get_token(uid)
-  with open(KEYDIR + 'uid', 'w') as f:
-    f.write(uid)
-except FileNotFoundError:
-  token, uid = register()
-
-  with open(KEYDIR + 'uid', 'w') as f:
-    f.write(uid)
-
-def file_upload(filepath):
-  headers = {
-    'Authorization': 'Bearer ' + token,
-  }
-
-  files = {
-    'file': open(filepath, 'rb')
-  }
-
-  res = requests.post(SERVER_URI + '/upload', headers=headers, files=files)
-  return res.text
+    data = {
+      'pubkey': key.publicKey(),
+      'uuid': state['uuid'],
+    }
 
 
+    res = requests.post(SERVER_URI + '/nonce', json=data)
 
-file_upload('test.txt')
+    if res.status_code != 200:
+      print('[upload] Failed to retrive nonce from server? Is the server running')
+      
+      return self.get_uuid() # we are assuming the uuid broke
+
+    body = res.json()
+    if not body['success']:
+      print('[upload] Server side error')
+      print(body)
+      return
+      
+    self.__nonce = body['nonce']
+
+  def upload(self, fname):
+
+    key = self.__key
+    state = self.__state
+
+    data = {
+      'uuid': state['uuid'],
+      'nonce': key.sign(self.__nonce),
+    }
+
+    files = {
+      'file': open(fname, 'r').read(),
+    }
+
+    res = requests.post(SERVER_URI + '/upload', json=data, files=files)
+    print(res.text)
+

@@ -1,4 +1,5 @@
 import os
+import struct
 from uuid import uuid4
 from base64 import b64decode, b64encode
 from datetime import datetime
@@ -12,6 +13,8 @@ from Crypto import Random
 from Crypto.Hash import MD5
 from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA
+
+from crypto_utils import ServerKey
 
 RSA_KEYLENGTH = 4096
 KEYDIR = 'keys/'
@@ -29,22 +32,14 @@ except FileNotFoundError:
     f.write(privkey.exportKey('PEM'))
 
 app = Flask(__name__)
-db = {
-  'uuids': {},
-  'files': {}, 
-  '''
-  {
-    [uid] => {
-      [fileid] => {
-        fname,
-        actual file name (in FILES dir),
-      }
-    }
-  }
-  '''
-} # we're using a dictionary in lieu of an actual database for simplicity's sake
 
-# TODO: intiialize random
+app.key = ServerKey(keydir='./keys')
+
+
+db = {
+  'pubkeys': {},
+  'uuids': {},
+} # we're using a dictionary in lieu of an actual database for simplicity's sake
 
 @app.route("/", methods=['GET'])
 def index():
@@ -52,6 +47,40 @@ def index():
   return "Hello World!"
 
 # TODO: POST /register
+
+@app.route('/uuid', methods=['POST'])
+def getuuid():
+
+  data = request.get_json()
+
+  if 'pubkey' not in data:
+    return abort(400, "No pubkey")
+  
+  b64pubkey = data['pubkey']
+
+  pubkey = RSA.importKey(b64decode(b64pubkey))
+  if b64pubkey in db['pubkeys']:
+    return jsonify({
+      'success': True,
+      'uuid': db['pubkeys']['pubkey'],
+    })
+
+  uid = str(uuid4())
+  while uid in db['uuids']:
+    uid = str(uuid4())
+
+  db['pubkeys'][b64pubkey] = uid
+
+  db['uuids'][uid] = {
+    'pubkey': pubkey,
+    'files': [],
+  }
+
+  return jsonify({
+    'success': True,
+    'uuid': uid,
+  })
+
 '''
 Register will receive the client's public key
 
@@ -62,145 +91,81 @@ def register():
   data = request.get_json()
   if 'pubkey' not in data:
     return abort(400, "No pubkey found in json body")
-  
-  pubkey = RSA.importKey(b64decode(data['pubkey']))
-  
-  if pubkey in db['uuids'].values():
-    return abort(400, "This pubkey is already registered with this server")
+  nonce = struct.unpack('<I', Random.get_random_bytes(4))[0]
 
-  uid = str(uuid4())
-  while uid in db['uuids']:
+  b64pubkey = data['pubkey']
+
+  if b64pubkey in db['pubkeys']:
+    uid = db['pubkeys'][b64pubkey]
+  else:
     uid = str(uuid4())
+    while uid in db['uuids']:
+      uid = str(uuid4())
   
-  db['uuids'][uid] = pubkey
-
-  contents = {
-    'uid': uid,
-    'iat': datetime.utcnow().timestamp(),
+  db['uuids'][uid] = {
+    'pubkey': b64pubkey, # we only store strings
+    'nonce': nonce,
   }
-
-  payload = b64encode(dumps(contents).encode('ascii'))
-
-  h = MD5.new()
-  h.update(payload)
-  signature = b64encode(privkey.publickey().encrypt(h.digest(), None)[0]).decode('ascii')
-
-
-  token = payload.decode('ascii') + '.' + signature
-
-  print(db)
 
   return jsonify({
     'success': True,
-    'token': token,
-    'uid': uid,
+    'uuid': uid,
+    'nonce': nonce
   })
 
-# TODO: gate methods below with an identity route that checks identities
 '''
-check_request:
-
-check "Authorization" header to grab the Bearer token
-(we're basically implementing OAuth1.0 for this server)
+refetch nonce
 '''
-# @app.before_request
-# def check_request():
-#   print("I am called before every request")
-
-#   authorization = request.headers.get('Authorization')
-#   if authorization is not None:
-#     print(authorization)
-    
-
-def check_request(f):
-  @wraps(f)
-  def decorated_function(*args, **kwargs):
-    authorization = request.headers.get('Authorization')
-    if authorization is None:
-      return abort(403)
-    print(authorization)
-    # TODO: verify token here
-    return f(*args, **kwargs)
-  return decorated_function
-
-
-# TODO: POST /token
-'''
-token will return tokens to clients
-token format:
-
-{
-  token: <string>
-}
-
-the token value is generated using:
-generate_token(payload, pubkey)
-{
-  uid: <string>,
-  iat: <datetime>,
-}
-'''
-@app.route('/token', methods=['POST'])
+@app.route('/nonce', methods=['POST'])
 def token():
   data = request.get_json()
-  if 'pubkey' not in data or 'uid' not in data:
+  if 'pubkey' not in data or 'uuid' not in data:
     return abort(400, "No pubkey or uid found in json body")
   
-  uid = data['uid']
+  uid = data['uuid']
   if uid not in db['uuids']:
     return abort(403, 'Uid not found in database')
 
-  pubkey = db['uuids'][uid]
+  state = db['uuids'][uid]
+  pubkey = state['pubkey']
 
-  verify = RSA.importKey(b64decode(data['pubkey']))
-  if verify != pubkey:
-    return abort(403, 'Pubkey does not match uid')
-  
-  contents = {
-    'uid': str(uid),
-    'iat': datetime.utcnow().timestamp(),
-  }
-
-  payload = b64encode(dumps(contents).encode('ascii'))
-
-  h = MD5.new()
-  h.update(payload)
-  signature = b64encode(privkey.publickey().encrypt(h.digest(), None)[0]).decode('ascii')
-
-
-  token = payload.decode('ascii') + '.' + signature
-
-  print(db)
+  if pubkey != data['pubkey']:
+    return 403, jsonify({ 'success': False, 'message': 'pubkeys do not match' })
 
   return jsonify({
     'success': True,
-    'token': token,
+    'nonce': state['nonce'],
   })
 
-# TODO: POST /upload
 '''
 POST /upload
 checks identity
 generates a fileid
 '''
 @app.route('/upload', methods=['POST'])
-@check_request
 def upload():
   if 'file' not in request.files:
     return abort(400)
   file = request.files['file']
   # if user does not select file, browser also
   # submit an empty part without filename
+
+  body = request.get_json()
+  print(body)
+
   if file.filename == '':
     return abort(400)
   if file:
-    fileid = uuid4()
+    fileid = str(uuid4())
+    fpath = os.path.join('files', fileid)
 
-    filename = secure_filename(file.filename)
-    file.save(os.path.join('files', fileid))
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+
+    file.save(fpath)
+
     return jsonify({
       'success': True,
-      # fileid:?
+      'fileid': fileid,
     })
 
   # TODO: generate random filename
@@ -211,7 +176,6 @@ GET /download
 request using the token provided above
 '''
 @app.route('/download/<string:id>', methods=['GET'])
-@check_request
 def download(id):
   
   # TODO: get fname by id
