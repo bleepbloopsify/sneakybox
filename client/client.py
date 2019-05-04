@@ -26,8 +26,7 @@ class Client(object):
         'uuid': None,
         'files': [],
       }
-    
-  
+
   def get_uuid(self):
     key = self.__key
     state = self.__state
@@ -57,7 +56,6 @@ class Client(object):
     with open('state.json', 'w+') as f:
       dump(self.__state, f)
 
-    
   def get_nonce(self):
     key = self.__key
     state = self.__state
@@ -66,7 +64,6 @@ class Client(object):
       'pubkey': key.publicKey(),
       'uuid': state['uuid'],
     }
-
 
     res = requests.post(SERVER_URI + '/nonce', json=data)
 
@@ -100,3 +97,15 @@ class Client(object):
     res = requests.post(SERVER_URI + '/upload', json=data, files=files)
     print(res.text)
 
+  def download(self, fileid):
+
+    key = self.__key
+    state = self.__state
+
+    data = {
+      'uuid': state['uuid'],
+      'nonce': key.sign(self.__nonce),
+    }
+
+    res = requests.get(SERVER_URI + '/download/' + fileid, allow_redirects=True)
+    print(res.content)

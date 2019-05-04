@@ -7,7 +7,7 @@ from json import dumps
 from functools import wraps
 from tempfile import NamedTemporaryFile
 
-from flask import Flask, jsonify, request, abort, send_file, g
+from flask import Flask, jsonify, request, abort, send_from_directory, g
 from werkzeug.utils import secure_filename
 from Crypto import Random
 from Crypto.Hash import MD5
@@ -35,7 +35,6 @@ app = Flask(__name__)
 
 app.key = ServerKey(keydir='./keys')
 
-
 db = {
   'pubkeys': {},
   'uuids': {},
@@ -45,8 +44,6 @@ db = {
 def index():
 
   return "Hello World!"
-
-# TODO: POST /register
 
 @app.route('/uuid', methods=['POST'])
 def getuuid():
@@ -83,7 +80,6 @@ def getuuid():
 
 '''
 Register will receive the client's public key
-
 '''
 @app.route('/register', methods=['POST'])
 def register():
@@ -168,22 +164,16 @@ def upload():
       'fileid': fileid,
     })
 
-  # TODO: generate random filename
-
-# TODO: GET /download
 '''
 GET /download
 request using the token provided above
 '''
 @app.route('/download/<string:id>', methods=['GET'])
 def download(id):
-  
-  # TODO: get fname by id
-  fname = None
-
-  return send_file(fname)
-
-
+  try:
+    return send_from_directory(directory=files_dir, filename=id)
+  except:
+    return abort(404)
 
 if __name__ == '__main__':
 
