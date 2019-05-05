@@ -1,5 +1,6 @@
-from json import load, dump
-import os
+from json import load, dump, dumps
+import os, sys
+from base64 import b64encode
 
 import requests
 
@@ -19,13 +20,13 @@ class Client(object):
     except FileNotFoundError:
       self.__state = {
         'uuid': None,
-        'files': [],
+        'files': {},
       }
     
     if 'uuid' not in self.__state or 'files' not in self.__state:
       self.__state = {
         'uuid': None,
-        'files': [],
+        'files': {},
       }
 
   def get_uuid(self):
@@ -88,15 +89,30 @@ class Client(object):
 
     data = {
       'uuid': state['uuid'],
-      'nonce': key.sign(self.__nonce),
+      'nonce': key.sign(self.__nonce + 1)[0],
+    }
+
+    headers = {
+      'X-Data': b64encode(dumps(data).encode('utf-8')),
     }
 
     files = {
       'file': open(fname, 'r').read(),
     }
 
-    res = requests.post(SERVER_URI + '/upload', json=data, files=files)
-    print(res.text)
+    res = requests.post(SERVER_URI + '/upload', headers=headers, files=files)
+
+    if res.status_code != 200:
+      print(res.text)
+      print("There was an error", file=sys.stderr)
+
+    fileid = res.json()['fileid']
+
+    state['files'][fname] = fileid
+
+    self.__state = state
+
+    return fileid
 
   def download(self, fileid):
 
@@ -105,10 +121,16 @@ class Client(object):
 
     data = {
       'uuid': state['uuid'],
-      'nonce': key.sign(self.__nonce),
+      'nonce': key.sign(self.__nonce + 1)[0],
     }
 
-    res = requests.get(SERVER_URI + '/download/' + fileid, allow_redirects=True)
+    headers = {
+      'X-Data': b64encode(dumps(data).encode('utf-8')),
+    }
+
+    self.__nonce += 1
+
+    res = requests.get(SERVER_URI + '/download/' + fileid, headers=headers, allow_redirects=True)
 
     if res.status_code != 200:
       print('[download] Failed to retrive file.')
@@ -120,3 +142,5 @@ class Client(object):
     with open('downloads/' + fileid, 'wb') as file:
       file.write(bytes(res.content))
       print('[download] File downloaded! Check your downloads folder for the file.')
+    
+    self.__state = state

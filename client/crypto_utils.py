@@ -12,12 +12,12 @@ class ClientKey(object):
 
   def __init__(self, keydir='./keys'):
 
-    print("[crypto_utils] Getting client public key")
+    # print("[crypto_utils] Getting client public key")
 
     key_fname = os.path.join(keydir, PRIV_KEY_FNAME)
     try:
       with open(key_fname, 'rb') as f:
-        print('[crypto_utils] Reading privkey from file: ' + key_fname)
+        # print('[crypto_utils] Reading privkey from file: ' + key_fname)
         self.__priv_key = RSA.importKey(f.read())
     except FileNotFoundError:
       self.__priv_key = RSA.generate(RSA_KEYLEN)

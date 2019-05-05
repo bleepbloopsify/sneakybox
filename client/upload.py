@@ -19,9 +19,8 @@ client = Client()
 client.get_uuid()
 client.get_nonce()
 
-client.upload(sys.argv[1])
+fileid = client.upload(sys.argv[1])
 
-# TODO: use nonce to make request against server
-# TODO: after upload store state in local state.json file
+print(fileid) # for passing to bash
 
 client.save()

@@ -20,3 +20,5 @@ client.get_uuid()
 client.get_nonce()
 
 client.download(sys.argv[1])
+
+client.save()

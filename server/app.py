@@ -3,7 +3,7 @@ import struct
 from uuid import uuid4
 from base64 import b64decode, b64encode
 from datetime import datetime
-from json import dumps
+from json import dumps, loads
 from functools import wraps
 from tempfile import NamedTemporaryFile
 
@@ -140,14 +140,37 @@ generates a fileid
 '''
 @app.route('/upload', methods=['POST'])
 def upload():
+
+  if 'X-Data' not in request.headers:
+    return abort(400, "Missing X-Data header")
+
+  payload = request.headers['X-Data']
+
+  body =  loads(b64decode(payload))
+  print(body)
+  if 'uuid' not in body or 'nonce' not in body:
+    return abort(400, 'Missing parameters')
+
+  uuid = body['uuid']
+  signednonce = body['nonce']
+
+  state = db['uuids'].get(uuid, None)
+  if state is None:
+    return abort(403, "That uuid was not found")
+  
+  pubkey = RSA.importKey(b64decode(state['pubkey']))
+  nonce = pubkey.encrypt(signednonce, 'yeet')[0]
+
+  if nonce <= state['nonce']:
+    return abort(403, "That nonce is no longer valid")
+
+  state['nonce'] += 1 # it worked so we keep going
+
   if 'file' not in request.files:
     return abort(400)
   file = request.files['file']
   # if user does not select file, browser also
   # submit an empty part without filename
-
-  body = request.get_json()
-  print(body)
 
   if file.filename == '':
     return abort(400)
@@ -170,6 +193,32 @@ request using the token provided above
 '''
 @app.route('/download/<string:id>', methods=['GET'])
 def download(id):
+
+  if 'X-Data' not in request.headers:
+    return abort(400, "Missing X-Data header")
+
+  payload = request.headers['X-Data']
+
+  body =  loads(b64decode(payload))
+  print(body)
+  if 'uuid' not in body or 'nonce' not in body:
+    return abort(400, 'Missing parameters')
+
+  uuid = body['uuid']
+  signednonce = body['nonce']
+
+  state = db['uuids'].get(uuid, None)
+  if state is None:
+    return abort(403, "That uuid was not found")
+  
+  pubkey = RSA.importKey(b64decode(state['pubkey']))
+  nonce = pubkey.encrypt(signednonce, 'yeet')[0]
+
+  if nonce <= state['nonce']:
+    return abort(403, "That nonce is no longer valid")
+
+  state['nonce'] += 1 # it worked so we keep going
+
   try:
     return send_from_directory(directory='files', filename=id)
   except FileNotFoundError as e:
