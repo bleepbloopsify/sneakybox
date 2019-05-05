@@ -18,7 +18,7 @@ client = Client()
 
 client.get_uuid()
 client.get_nonce()
-
+client.init_kex()
 client.download(sys.argv[1])
 
 client.save()

@@ -7,14 +7,14 @@ from json import dumps, loads
 from functools import wraps
 from tempfile import NamedTemporaryFile
 
-from flask import Flask, jsonify, request, abort, send_from_directory, g
+from flask import Flask, jsonify, request, abort, send_from_directory, g, after_this_request
 from werkzeug.utils import secure_filename
 from Crypto import Random
 from Crypto.Hash import MD5
 from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA
 
-from crypto_utils import ServerKey
+from crypto_utils import ServerKey, KeyExchange
 
 RSA_KEYLENGTH = 4096
 KEYDIR = 'keys/'
@@ -39,6 +39,8 @@ db = {
   'pubkeys': {},
   'uuids': {},
 } # we're using a dictionary in lieu of an actual database for simplicity's sake
+
+exchanges = {}
 
 @app.route("/", methods=['GET'])
 def index():
@@ -133,21 +135,15 @@ def token():
     'nonce': state['nonce'],
   })
 
-'''
-POST /upload
-checks identity
-generates a fileid
-'''
-@app.route('/upload', methods=['POST'])
-def upload():
-
+@app.route('/kexinit', methods=['POST'])
+def kexinit():
   if 'X-Data' not in request.headers:
     return abort(400, "Missing X-Data header")
 
   payload = request.headers['X-Data']
 
   body =  loads(b64decode(payload))
-  print(body)
+
   if 'uuid' not in body or 'nonce' not in body:
     return abort(400, 'Missing parameters')
 
@@ -166,6 +162,66 @@ def upload():
 
   state['nonce'] += 1 # it worked so we keep going
 
+  body = request.values
+  if 'client_exp' not in body or 'pub_mod' not in body:
+    return abort(400, 'Missing paramters client_exp or pub_mod')
+    
+  client_exp = int(b64decode(body['client_exp']), 16)
+  pub_mod = int(b64decode(body['pub_mod']), 16)
+
+  kex = KeyExchange(client_exp, pub_mod)
+  uid = kex.getUid()
+  exchanges[uid] = kex
+
+  return jsonify({
+    'pub_exp': kex.showPublicExponent(),
+    'uid': kex.getUid(),
+  })
+
+'''
+POST /upload
+checks identity
+generates a fileid
+'''
+@app.route('/upload', methods=['POST'])
+def upload():
+
+  if 'X-Data' not in request.headers:
+    return abort(400, "Missing X-Data header")
+
+  payload = request.headers['X-Data']
+
+  body =  loads(b64decode(payload))
+
+  if 'uuid' not in body or 'nonce' not in body or 'kexid' not in body:
+    return abort(400, 'Missing parameters')
+
+  uuid = body['uuid']
+  signednonce = body['nonce']
+  kexid = body['kexid']
+
+  state = db['uuids'].get(uuid, None)
+  if state is None:
+    return abort(403, "That uuid was not found")
+  
+  pubkey = RSA.importKey(b64decode(state['pubkey']))
+  nonce = pubkey.encrypt(signednonce, 'yeet')[0]
+
+  if nonce <= state['nonce']:
+    return abort(403, "That nonce is no longer valid")
+
+  state['nonce'] += 1 # it worked so we keep going
+
+  db['uuids'][uuid] = state
+
+  if kexid not in exchanges:
+    return abort(400, "KexID incorrect")
+  
+  kex = exchanges[kexid]
+  aeskey = kex.getKey()
+
+  cipher = AES.new(aeskey, mode=AES.MODE_ECB)
+
   if 'file' not in request.files:
     return abort(400)
   file = request.files['file']
@@ -181,6 +237,12 @@ def upload():
     os.makedirs(os.path.dirname(fpath), exist_ok=True)
 
     file.save(fpath)
+    with open(fpath, 'rb') as f:
+      decrypted = cipher.decrypt(f.read())
+      with open(fpath, 'wb+') as w:
+        w.write(decrypted)
+
+    app.key.encrypt_file(fpath)
 
     return jsonify({
       'success': True,
@@ -218,8 +280,20 @@ def download(id):
     return abort(403, "That nonce is no longer valid")
 
   state['nonce'] += 1 # it worked so we keep going
+  db['uuids'][uuid] = state
 
   try:
+    app.key.decrypt_file(os.path.join('files', id))
+
+    @after_this_request
+    def remove_file(res, fname=os.path.join('files', id)):
+      try:
+        os.remove(fname)
+      except:
+        print("Error deleting file?")
+      
+      return res
+
     return send_from_directory(directory='files', filename=id)
   except FileNotFoundError as e:
     print(e)

@@ -1,6 +1,8 @@
 import os
 import time
 import struct
+from uuid import uuid4
+from random import randint
 
 from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA
@@ -66,7 +68,7 @@ class ServerKey(object):
     encryptor = AES.new(self.__storage_key, AES.MODE_CBC, iv)
 
     with open(file, 'rb') as reading:
-      with open(file, 'rb+') as writing:
+      with open(file + '.enc', 'wb+') as writing:
         writing.seek(0, 0)
 
         filesize = os.path.getsize(file)
@@ -89,7 +91,7 @@ class ServerKey(object):
           writing.write(encrypted)
   
   def decrypt_file(self, file):
-    with open(file, 'rb') as reading:
+    with open(file + '.enc', 'rb') as reading:
       with open(file, 'rb+') as writing:
         writing.seek(0, 0)
 
@@ -115,6 +117,28 @@ class ServerKey(object):
 
   def unwrap_file(self, key):
     pass
+
+PUBLIC_EXPONENT = 65537 # nye he he
+KEY_EXCHANGE_MODULUS_BITLEN = 256
+class KeyExchange(object):
+
+  def __init__(self, client_exp, modulo):
+    self.__id = str(uuid4())
+    self.__client_exp = client_exp
+    self.__public_modulo = modulo
+    self.__priv_key = randint(0, 65535)
+  
+  def getUid(self):
+    return self.__id
+
+  def showPublicExponent(self):
+
+    return pow(PUBLIC_EXPONENT, self.__priv_key, self.__public_modulo)
+  
+  def getKey(self):
+    
+    return pow(self.__client_exp, self.__priv_key, self.__public_modulo).to_bytes(KEY_EXCHANGE_MODULUS_BITLEN // 8, byteorder='little')
+
 
 
 if __name__ == '__main__':

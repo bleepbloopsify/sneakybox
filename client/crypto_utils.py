@@ -1,6 +1,8 @@
 import os
 from base64 import b64encode
 import struct
+from random import randint, getrandbits
+
 
 from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA
@@ -36,3 +38,32 @@ class ClientKey(object):
 
   def sign(self, data):
     return self.__priv_key.sign(data, 'yeet')
+
+
+
+PUBLIC_EXPONENT = 65537 # nye he he
+KEY_EXCHANGE_MODULUS_BITLEN = 256
+class KeyExchange(object):
+
+  def __init__(self):
+
+    self.__priv_key = randint(0, 65535) # should maybe make this larger
+    self.__public_modulo = getrandbits(KEY_EXCHANGE_MODULUS_BITLEN)
+
+  def showPublicModulus(self):
+
+    return pow(PUBLIC_EXPONENT, self.__priv_key, self.__public_modulo), self.__public_modulo
+  
+  def setServerPubMod(self, server_pub_mod, uid):
+    self.__uuid = uid
+    self.__server_pub_mod = server_pub_mod
+
+  def getUid(self):
+    return self.__uuid
+
+  def getKey(self):
+    return pow(self.__server_pub_mod, self.__priv_key,self.__public_modulo).to_bytes(KEY_EXCHANGE_MODULUS_BITLEN // 8, byteorder='little')
+
+if __name__ == '__main__':
+  kex = KeyExchange()
+  print(kex.showPublicModulus())

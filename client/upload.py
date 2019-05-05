@@ -19,6 +19,7 @@ client = Client()
 client.get_uuid()
 client.get_nonce()
 
+client.init_kex()
 fileid = client.upload(sys.argv[1])
 
 print(fileid) # for passing to bash

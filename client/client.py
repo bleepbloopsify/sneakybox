@@ -3,8 +3,9 @@ import os, sys
 from base64 import b64encode
 
 import requests
+from Crypto.Cipher import AES
 
-from crypto_utils import ClientKey
+from crypto_utils import ClientKey, KeyExchange
 
 SERVER_URI = 'http://0.0.0.0:9000'
 
@@ -28,6 +29,8 @@ class Client(object):
         'uuid': None,
         'files': {},
       }
+
+    self.__kex = KeyExchange()
 
   def get_uuid(self):
     key = self.__key
@@ -82,6 +85,39 @@ class Client(object):
       
     self.__nonce = body['nonce']
 
+  def init_kex(self):
+    key = self.__key
+    state = self.__state
+
+    exp, mod = self.__kex.showPublicModulus()
+
+    data = {
+      'uuid': state['uuid'],
+      'nonce': key.sign(self.__nonce + 1)[0],
+    }
+
+    self.__nonce += 1
+
+    headers = {
+      'X-Data': b64encode(dumps(data).encode('utf-8')),
+    }
+
+    body = {
+      'client_exp': b64encode(hex(exp).encode('utf-8')),
+      'pub_mod': b64encode(hex(mod).encode('utf-8')),
+    }
+
+    self.__state = state
+
+    res = requests.post(SERVER_URI + '/kexinit', headers=headers, data=body)
+    if res.status_code != 200:
+      print(res.text)
+      return
+    
+    res = res.json()
+
+    self.__kex.setServerPubMod(res['pub_exp'], res['uid'])
+
   def upload(self, fname):
 
     key = self.__key
@@ -90,14 +126,25 @@ class Client(object):
     data = {
       'uuid': state['uuid'],
       'nonce': key.sign(self.__nonce + 1)[0],
+      'kexid': self.__kex.getUid(),
     }
+
+    self.__nonce += 1
 
     headers = {
       'X-Data': b64encode(dumps(data).encode('utf-8')),
     }
 
+    aeskey = self.__kex.getKey()
+    print(aeskey)
+
+    cipher = AES.new(key=aeskey, mode=AES.MODE_ECB)
+
+    data = open(fname, 'r').read()
+    data += '\x00' * (16 - len(data) % 16)
+
     files = {
-      'file': open(fname, 'r').read(),
+      'file': cipher.encrypt(data),
     }
 
     res = requests.post(SERVER_URI + '/upload', headers=headers, files=files)
@@ -122,6 +169,7 @@ class Client(object):
     data = {
       'uuid': state['uuid'],
       'nonce': key.sign(self.__nonce + 1)[0],
+      'kexid': self.__kex.getUid(),
     }
 
     headers = {
