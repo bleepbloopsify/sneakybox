@@ -6,8 +6,9 @@ from datetime import datetime
 from json import dumps, loads
 from functools import wraps
 from tempfile import NamedTemporaryFile
+from io import BytesIO
 
-from flask import Flask, jsonify, request, abort, send_from_directory, g, after_this_request
+from flask import Flask, jsonify, request, abort, send_file, g, after_this_request
 from werkzeug.utils import secure_filename
 from Crypto import Random
 from Crypto.Hash import MD5
@@ -72,7 +73,7 @@ def getuuid():
 
   db['uuids'][uid] = {
     'pubkey': pubkey,
-    'files': [],
+    'files': {},
   }
 
   return jsonify({
@@ -103,6 +104,7 @@ def register():
   db['uuids'][uid] = {
     'pubkey': b64pubkey, # we only store strings
     'nonce': nonce,
+    'files': {},
   }
 
   return jsonify({
@@ -222,32 +224,37 @@ def upload():
 
   cipher = AES.new(aeskey, mode=AES.MODE_ECB)
 
-  if 'file' not in request.files:
-    return abort(400)
-  file = request.files['file']
-  # if user does not select file, browser also
-  # submit an empty part without filename
+  for fname, file in request.files.items():
+    # if user does not select file, browser also
+    # submit an empty part without filename
 
-  if file.filename == '':
-    return abort(400)
-  if file:
-    fileid = str(uuid4())
-    fpath = os.path.join('files', fileid)
+    if file.filename == '':
+      return abort(400)
+    if file:
+      fileid = str(uuid4())
+      fpath = os.path.join('files', fileid)
 
-    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+      os.makedirs(os.path.dirname(fpath), exist_ok=True)
 
-    file.save(fpath)
-    with open(fpath, 'rb') as f:
-      decrypted = cipher.decrypt(f.read())
-      with open(fpath, 'wb+') as w:
-        w.write(decrypted)
+      file.save(fpath)
+      with open(fpath, 'rb') as f:
+        decrypted = cipher.decrypt(f.read())
+        with open(fpath, 'wb+') as w:
+          w.write(decrypted)
 
-    app.key.encrypt_file(fpath)
+      app.key.encrypt_file(fpath)
 
-    return jsonify({
-      'success': True,
-      'fileid': fileid,
-    })
+      state['files'][fileid] = {
+        'filename': file.filename,
+      }
+      db['uuids'][uuid] = state
+
+      del exchanges[kexid]
+
+      return jsonify({
+        'success': True,
+        'fileid': fileid,
+      })
 
 '''
 GET /download
@@ -262,17 +269,18 @@ def download(id):
   payload = request.headers['X-Data']
 
   body =  loads(b64decode(payload))
-  print(body)
+
   if 'uuid' not in body or 'nonce' not in body:
     return abort(400, 'Missing parameters')
 
   uuid = body['uuid']
   signednonce = body['nonce']
+  kexid = body['kexid']
 
   state = db['uuids'].get(uuid, None)
   if state is None:
     return abort(403, "That uuid was not found")
-  
+
   pubkey = RSA.importKey(b64decode(state['pubkey']))
   nonce = pubkey.encrypt(signednonce, 'yeet')[0]
 
@@ -282,19 +290,34 @@ def download(id):
   state['nonce'] += 1 # it worked so we keep going
   db['uuids'][uuid] = state
 
+  if kexid not in exchanges:
+    return abort(400, "KexID incorrect")
+  
+  kex = exchanges[kexid]
+  aeskey = kex.getKey()
+
+  cipher = AES.new(aeskey, mode=AES.MODE_ECB)
+
+  if id not in state['files']:
+    return abort(404, "File not uploaded")
+
+  fstate = state['files'][id]
+
   try:
+    strio = BytesIO()
     app.key.decrypt_file(os.path.join('files', id))
+    with open(os.path.join('files', id), 'rb') as f:
+      strio.write(cipher.encrypt(f.read()))
 
-    @after_this_request
-    def remove_file(res, fname=os.path.join('files', id)):
-      try:
-        os.remove(fname)
-      except:
-        print("Error deleting file?")
-      
-      return res
+    try:
+      os.remove(os.path.join('files', id))
+    except:
+      print("Error deleting file?")
 
-    return send_from_directory(directory='files', filename=id)
+    strio.seek(0)
+    del exchanges[kexid]
+
+    return send_file(strio, attachment_filename=fstate['filename'], as_attachment=True)
   except FileNotFoundError as e:
     print(e)
     return abort(404)

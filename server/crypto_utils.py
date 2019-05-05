@@ -75,8 +75,6 @@ class ServerKey(object):
 
         chunk = reading.read(AES_CHUNKSIZE)
 
-        print(chunk)
-
         writing.write(struct.pack('<Q', filesize)) # always write size
         writing.write(iv)
 

@@ -29,10 +29,14 @@ class Client(object):
         'uuid': None,
         'files': {},
       }
+    
+    self.__nonce = 0
 
     self.__kex = KeyExchange()
 
-  def get_uuid(self):
+  def get_uuid(self, force=False):
+    if self.__state['uuid'] is not None and not force:
+      return
     key = self.__key
     state = self.__state
 
@@ -73,9 +77,9 @@ class Client(object):
     res = requests.post(SERVER_URI + '/nonce', json=data)
 
     if res.status_code != 200:
-      print('[upload] Failed to retrive nonce from server? Is the server running')
+      # print('[upload] Failed to retrive nonce from server? Is the server running')
       
-      return self.get_uuid() # we are assuming the uuid broke
+      return self.get_uuid(force=True) # we are assuming the uuid broke
 
     body = res.json()
     if not body['success']:
@@ -136,7 +140,6 @@ class Client(object):
     }
 
     aeskey = self.__kex.getKey()
-    print(aeskey)
 
     cipher = AES.new(key=aeskey, mode=AES.MODE_ECB)
 
@@ -144,7 +147,7 @@ class Client(object):
     data += '\x00' * (16 - len(data) % 16)
 
     files = {
-      'file': cipher.encrypt(data),
+      fname: cipher.encrypt(data),
     }
 
     res = requests.post(SERVER_URI + '/upload', headers=headers, files=files)
@@ -182,13 +185,20 @@ class Client(object):
 
     if res.status_code != 200:
       print('[download] Failed to retrive file.')
+      print(res.text)
       exit(1)
 
     fpath = os.path.join('downloads', fileid)
     os.makedirs(os.path.dirname(fpath), exist_ok=True)
 
-    with open('downloads/' + fileid, 'wb') as file:
-      file.write(bytes(res.content))
+    fname = res.headers['Content-Disposition'].split(';')[1:][0].split('=')[1]
+
+    aeskey = self.__kex.getKey()
+
+    cipher = AES.new(key=aeskey, mode=AES.MODE_ECB)
+
+    with open('downloads/' + fileid + '.' + fname, 'wb') as file:
+      file.write(cipher.decrypt(res.content).strip(b'\x00'))
       print('[download] File downloaded! Check your downloads folder for the file.')
-    
+
     self.__state = state
