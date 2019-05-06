@@ -16,6 +16,8 @@ The client allows you to upload/download files from server
 `$ python upload.py <filename>`
 `$ python download.py <file_id/filename>`
 
+For a comprehensive test, we have included test.sh and test.txt for upload/download testing
+
 ## Server
 `$ cd server`
 `$ python3 -m venv env`
