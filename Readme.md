@@ -27,3 +27,6 @@ For a comprehensive test, we have included test.sh and test.txt for upload/downl
 The server serves locally. Make sure port 9000 is open
 
 `$ python app.py`
+
+
+The git repo for this lives at https://github.com/bleepbloopsify/sneakybox
